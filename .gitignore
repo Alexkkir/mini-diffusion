@@ -1,0 +1,8 @@
+.vscode
+__ipynb_checkpoints__
+__pycache__
+
+*.tar
+*.zip
+*.7z
+*.rar
