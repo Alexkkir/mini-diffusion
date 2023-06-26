@@ -133,10 +133,10 @@ def plot_images(samples, settings: Settings, n=64):
     ax = ax.ravel()
     for i in range(n):
         ax[i].imshow(
-            samples[-1][i].reshape(
+            (samples[-1][i].reshape(
                 settings.image_size, settings.image_size, settings.channels
-            ),
-            cmap="gray",
+            ) + 1) / 2,
+            # cmap="gray",
         )
     plt.tight_layout()
     plt.show()
