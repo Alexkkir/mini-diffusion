@@ -1,6 +1,7 @@
 .vscode
 __ipynb_checkpoints__
 __pycache__
+.DS_Store
 
 *.tar
 *.zip
