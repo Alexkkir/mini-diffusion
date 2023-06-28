@@ -1,7 +1,7 @@
-.vscode
-__ipynb_checkpoints__
-__pycache__
-.DS_Store
+.*/
+.*
+__*/
+!.gitignore
 
 *.tar
 *.zip

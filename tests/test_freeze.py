@@ -64,8 +64,9 @@ def test_only_lora_updating():
     inject_lora(
         model, 2, 0, ["Attention"], [nn.Linear], [LoraInjectedLinear], verbose=True
     )
-    unfreeze_module(model)
-    freeze_lora(model)
+    
+    freeze_module(model)
+    unfreeze_lora(model)
 
     optim = Adam(model.parameters())
     sd1 = deepcopy(model.state_dict())

@@ -1,7 +1,9 @@
-from typing import List, Optional, Set, Tuple, Type
+from typing import List, Optional, Set, Tuple, Type, Generator
 
 import torch
 from torch import nn
+
+from collections import defaultdict
 
 from .utils import (
     freeze_module,
@@ -10,22 +12,25 @@ from .utils import (
     unfreeze_module,
 )
 
-__all__ = [
-    "find_modules",
-    "LoraInjectedLinear",
-    "LoraInjectedConv2d",
-    "inject_lora",
-    "freeze_lora",
-]
+# __all__ = [
+#     "find_modules",
+#     "LoraInjectedLinear",
+#     "LoraInjectedConv2d",
+#     "inject_lora",
+#     "unfreeze_lora",
+#     "get_"
+# ]
 
 
 class LoraInjectedLinear(nn.Module):
     def __init__(self, src_linear: nn.Linear, rank: int, dropout: float, bias=False):
         super().__init__()
         self.rank = rank
+        self.scale = 1
+        self.dropout = dropout
+
         self.in_features = src_linear.in_features
         self.out_features = src_linear.out_features
-        self.dropout = dropout
 
         self.src_linear = src_linear  # maybe deepcopy
         device = self.src_linear.weight.device
@@ -43,12 +48,16 @@ class LoraInjectedLinear(nn.Module):
         nn.init.zeros_(self.lora_up.weight)
 
     def forward(self, x):
-        return self.src_linear(x) + self.dropout_layer(self.lora_up(self.lora_down(x)))
+        return self.src_linear(x) + self.scale * self.dropout_layer(self.lora_up(self.lora_down(x)))
 
     def freeze_lora(self):
         freeze_module(self.src_linear)
         unfreeze_module(self.lora_up)
         unfreeze_module(self.lora_down)
+
+    def get_lora_embeds(self):
+        yield 'lora_down', self.lora_down
+        yield 'lora_up', self.lora_up
 
 
 class LoraInjectedConv2d(nn.Module):
@@ -56,6 +65,7 @@ class LoraInjectedConv2d(nn.Module):
         super().__init__()
         self.rank = rank
         self.dropout = dropout
+        self.scale = 1
 
         self.in_channels = src_conv.in_channels
         self.out_channels = src_conv.out_channels
@@ -92,12 +102,16 @@ class LoraInjectedConv2d(nn.Module):
         nn.init.zeros_(self.lora_up.weight)
 
     def forward(self, x):
-        return self.src_conv(x) + self.dropout_layer(self.lora_up(self.lora_down(x)))
+        return self.src_conv(x) + self.scale * self.dropout_layer(self.lora_up(self.lora_down(x)))
 
     def freeze_lora(self):
         freeze_module(self.src_conv)
         unfreeze_module(self.lora_up)
         unfreeze_module(self.lora_down)
+
+    def get_lora_embeds(self):
+        yield 'lora_down', self.lora_down
+        yield 'lora_up', self.lora_up
 
 
 LORA_MODULES = [LoraInjectedLinear, LoraInjectedConv2d]
@@ -108,7 +122,7 @@ def find_modules(
     parent_module: List[str],
     injected_modules: List[nn.Module],
     lora_modules: List[nn.Module] = LORA_MODULES,
-) -> Tuple[nn.Module, nn.Module, str, str]:
+) -> tuple[nn.Module, nn.Module, str, str]:
     """
     Find layers, which should be replaced with their lora verions. Return parents of these modules
     and modules themselves
@@ -119,14 +133,8 @@ def find_modules(
     1. target_module => injected_module (chained link)
     2. excluded_module !-> injected_module (direct link)
     """
-    # if not isinstance(target_modules, list):
-    #     target_modules = [target_modules]
-    # if not isinstance(injected_modules, list):
-    #     injected_modules = [injected_modules]
-    # if not isinstance(lora_modules, list):
-    #     lora_modules = [lora_modules]
 
-    ancestors: List[nn.Module] = [
+    ancestors = [
         (name, module)
         for name, module in model.named_modules()
         if isinstance_by_str(module, parent_module)
@@ -171,31 +179,33 @@ def inject_lora(
                 )
 
 
-def find_lora_modules():
-    pass
+def get_lora_modules(model: nn.Module, lora_modules: List[nn.Module] = LORA_MODULES):
+    for name, module in model.named_modules():
+        if isinstance_by_class(module, lora_modules):
+            yield name, module
 
 
-def find_lora_parameters():
-    pass
+def get_lora_parameters(model, lora_modules: List[nn.Module] = LORA_MODULES):
+    for module_name, lora_module in get_lora_modules(model, lora_modules):
+        for embed_name, embed in lora_module.get_lora_embeds():
+            for param_name, p in embed.named_parameters():
+                full_name = f"{module_name}.{embed_name}.{param_name}"
+                yield full_name, p
 
 
-def freeze_lora(module: nn.Module, lora_modules: List[nn.Module] = LORA_MODULES):
-    is_leaf = len(list(module.children())) == 0
-    is_lora = isinstance_by_class(module, lora_modules)
+def unfreeze_lora(model, lora_modules: List[nn.Module] = LORA_MODULES):
+    for name, p in get_lora_parameters(model, lora_modules):
+        p.requires_grad = True
 
-    if is_lora:
-        module.freeze_lora()
-    else:
-        freeze_module(module)
-
-    if not is_leaf and not is_lora:
-        for children in module.children():
-            freeze_lora(children, lora_modules)
+def save_lora(model: nn.Module, file: str):
+    lora_state_dict = {k: v for k, v in get_lora_parameters(model)}
+    torch.save(lora_state_dict, file)
 
 
-def save_lora():
-    pass
+def load_lora(model: nn.Module, file: str):
+    lora_state_dict = torch.load(file)
+    model.load_state_dict(lora_state_dict, strict=False)
 
-
-def load_lora():
-    pass
+def set_scale(model, scale, lora_modules: List[nn.Module] = LORA_MODULES):
+    for name, module in get_lora_modules(model, lora_modules):
+        module.scale = scale
