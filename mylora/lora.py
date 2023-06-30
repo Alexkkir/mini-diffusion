@@ -37,10 +37,10 @@ class LoraInjectedLinear(nn.Module):
         dtype = self.src_linear.weight.dtype
 
         self.lora_down = nn.Linear(
-            self.in_features, rank, bias=bias, device=device, dtype=dtype
+            self.in_features, rank, bias=bias
         )
         self.lora_up = nn.Linear(
-            rank, self.out_features, bias=bias, device=device, dtype=dtype
+            rank, self.out_features, bias=bias
         )
         self.dropout_layer = nn.Dropout1d(dropout)
 
