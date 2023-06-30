@@ -33,22 +33,26 @@ class LoraInjectedLinear(nn.Module):
         self.out_features = src_linear.out_features
 
         self.src_linear = src_linear  # maybe deepcopy
-        device = self.src_linear.weight.device
-        dtype = self.src_linear.weight.dtype
 
         self.lora_down = nn.Linear(
-            self.in_features, rank, bias=bias, device=device, dtype=dtype
+            self.in_features, rank, bias=bias
         )
         self.lora_up = nn.Linear(
-            rank, self.out_features, bias=bias, device=device, dtype=dtype
+            rank, self.out_features, bias=bias
         )
         self.dropout_layer = nn.Dropout1d(dropout)
 
         nn.init.normal_(self.lora_down.weight, std=1 / rank)
         nn.init.zeros_(self.lora_up.weight)
 
-    def forward(self, x):
-        return self.src_linear(x) + self.scale * self.dropout_layer(self.lora_up(self.lora_down(x)))
+    def forward(self, x: torch.Tensor):
+        orig_dtype = x.dtype
+        dtype = self.lora_down.weight.dtype
+
+        # print(f"{x.dtype=}")
+        # print(f"{self.src_linear.weight.dtype=}")
+        # print(f"{self.lora_up.weight.dtype=}")
+        return self.src_linear(x) + self.scale * self.dropout_layer(self.lora_up(self.lora_down(x.to(dtype)))).to(orig_dtype)
 
     def freeze_lora(self):
         freeze_module(self.src_linear)
@@ -160,15 +164,14 @@ def inject_lora(
 ):
     # возможно лучше напрямую искать модуль
     # lst = list(find_modules(model, target_modules, injected_modules, lora_modules))
-    for parent, children, parent_name, children_name in find_modules(
-        model, target_modules, injected_modules, lora_modules
+    for parent, children, parent_name, children_name in find_modules( model, target_modules, injected_modules, lora_modules
     ):
         if isinstance(children, nn.Linear):
             lora = LoraInjectedLinear(children, rank, dropout)
             parent._modules[children_name] = lora
             if verbose:
                 print(
-                    f"Injected lora ({lora.in_features}x{rank}x{lora.out_features}) in {parent_name}.{children_name}"
+                    f"Injected lora {lora.in_features:>5d} x {rank:1d} x {lora.out_features:<5d} in {parent_name}.{children_name}"
                 )
         elif isinstance(children, nn.Conv2d):
             lora = LoraInjectedConv2d(children, rank, dropout)
