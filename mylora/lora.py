@@ -40,7 +40,6 @@ class LoraInjectedLinear(nn.Module):
         self.lora_up = nn.Linear(
             rank, self.out_features, bias=bias
         )
-        self.dropout_layer = nn.Dropout1d(dropout)
 
         nn.init.normal_(self.lora_down.weight, std=1 / rank)
         nn.init.zeros_(self.lora_up.weight)
@@ -52,7 +51,7 @@ class LoraInjectedLinear(nn.Module):
         # print(f"{x.dtype=}")
         # print(f"{self.src_linear.weight.dtype=}")
         # print(f"{self.lora_up.weight.dtype=}")
-        return self.src_linear(x) + self.scale * self.dropout_layer(self.lora_up(self.lora_down(x.to(dtype)))).to(orig_dtype)
+        return self.src_linear(x) + self.scale * self.lora_up(self.lora_down(x.to(dtype))).to(orig_dtype)
 
     def freeze_lora(self):
         freeze_module(self.src_linear)
@@ -106,7 +105,9 @@ class LoraInjectedConv2d(nn.Module):
         nn.init.zeros_(self.lora_up.weight)
 
     def forward(self, x):
-        return self.src_conv(x) + self.scale * self.dropout_layer(self.lora_up(self.lora_down(x)))
+        orig_dtype = x.dtype
+        dtype = self.lora_down.weight.dtype
+        return self.src_conv(x) + self.scale * self.dropout_layer(self.lora_up(self.lora_down(x.to(dtype)))).to(orig_dtype)
 
     def freeze_lora(self):
         freeze_module(self.src_conv)
